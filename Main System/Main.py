@@ -33,6 +33,9 @@ GPIO.setup(redLedPin, GPIO.OUT)
 buzzer = 13
 GPIO.setup(buzzer, GPIO.OUT)
 
+#set the IR sensor pin
+irSensor = 15
+GPIO.setup(irSensor, GPIO.IN)
 
 # function to call the ultrasonic sensor
 def ultra_sonic_sensor():
@@ -77,11 +80,14 @@ def magnet_sensor():
 
 #function to call the buzzer
 def set_buzzer():
-
     GPIO.output(buzzer, GPIO.HIGH)
     time.sleep(0.5)
     GPIO.output(buzzer, GPIO.LOW)
     time.sleep(0.5)
+
+def ir_sensor():
+    ir = GPIO.input(irSensor)
+    return ir
 
 # define the main function (The Entry Point of the program)
 # in this function it will call all sensor's function and handle the logic calling
@@ -89,16 +95,17 @@ def main():
     try:
         while True:
             distance = ultra_sonic_sensor()
-            motion = pir_sensor()
+            motion = ir_sensor()
             opened = magnet_sensor()
             if opened == 0 :
                 print("closed")
             else :
                 print("opened")
-                for i in range(0, 3):
+                while True:
                     set_buzzer()
                     if magnet_sensor() == 0 :
                         break
+                    time.sleep(0.5)
 
             if distance > 1 and motion == 0:
                 GPIO.output(firstGreenLedPin, 0)
