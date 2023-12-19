@@ -3,7 +3,7 @@ import time
 
 GPIO.cleanup()
 
-# setup the GPIO Numbering Mode To Board (Position of the Pin on The Board)
+# set up the GPIO Numbering Mode To Board (Position of the Pin on The Board)
 GPIO.setmode(GPIO.BOARD)
 
 # set the pins for the ultrasonic sensor (Trigger Pin Out & Echo Pin In)
@@ -29,9 +29,16 @@ GPIO.setup(firstGreenLedPin, GPIO.OUT)
 GPIO.setup(secondGreenLedPin, GPIO.OUT)
 GPIO.setup(redLedPin, GPIO.OUT)
 
+#set the buzzer pin
+buzzer = 13
+GPIO.setup(buzzer, GPIO.OUT)
+
+#set the IR sensor pin
+irSensor = 15
+GPIO.setup(irSensor, GPIO.IN)
 
 # function to call the ultrasonic sensor
-def ultraSonicSensor():
+def ultra_sonic_sensor():
     # send the signals from the trigger pin
     # set the trigPin by 0 for 2 Micro Second (E-6 refers to Micro Second)
     GPIO.output(trigPin, 0)
@@ -46,39 +53,59 @@ def ultraSonicSensor():
     # wait while the reading from echoPin = 0
     while GPIO.input(echoPin) == 0:
         pass
-    echoStartTime = time.time()  # read the start time
+    echo_start_time = time.time()  # read the start time
 
     # wait while the reading from echoPin = 1
     while GPIO.input(echoPin) == 1:
         pass
-    echoStopTime = time.time()  # read the stop time
+    echo_stop_time = time.time()  # read the stop time
 
-    ptt = echoStopTime - echoStartTime  # calculate the ping travel time
+    ptt = echo_stop_time - echo_start_time  # calculate the ping travel time
 
     distance = round(343 * ptt / 2, 3)  # Calculate the distance
     return distance
 
 
 # function to call the PIR sensor
-def pirSensor():
+def pir_sensor():
     # read the input from the output pin in PIR sensor 
     motion = GPIO.input(pirInputPin)
     return motion
 
 
-def magnetSensor():
+#function to call the magnet sensor
+def magnet_sensor():
     opened = GPIO.input(magnetPin)
     return opened
 
+#function to call the buzzer
+def set_buzzer():
+    GPIO.output(buzzer, GPIO.HIGH)
+    time.sleep(0.5)
+    GPIO.output(buzzer, GPIO.LOW)
+    time.sleep(0.5)
+
+def ir_sensor():
+    ir = GPIO.input(irSensor)
+    return ir
 
 # define the main function (The Entry Point of the program)
-# in this function it will call all sensors function  and handle the logic calling
+# in this function it will call all sensor's function and handle the logic calling
 def main():
     try:
         while True:
-            distance = ultraSonicSensor()
-            motion = pirSensor()
-            opened = magnetSensor()
+            distance = ultra_sonic_sensor()
+            motion = ir_sensor()
+            opened = magnet_sensor()
+            if opened == 0 :
+                print("closed")
+            else :
+                print("opened")
+                while True:
+                    set_buzzer()
+                    if magnet_sensor() == 0 :
+                        break
+                    time.sleep(0.5)
 
             if distance > 1 and motion == 0:
                 GPIO.output(firstGreenLedPin, 0)
