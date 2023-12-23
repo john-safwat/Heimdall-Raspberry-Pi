@@ -1,6 +1,7 @@
 import RPi.GPIO as GPIO
 from time import sleep, time
-from kplib import Keypad
+from keypad_lib import Keypad
+from picamera2 import  Picamera2
 
 GPIO.cleanup()
 
@@ -38,6 +39,8 @@ GPIO.setup(buzzer, GPIO.OUT)
 irSensor = 15
 GPIO.setup(irSensor, GPIO.IN)
 
+# set the camera
+piCam = Picamera2()
 
 # function to call the ultrasonic sensor
 def ultra_sonic_sensor():
@@ -84,7 +87,7 @@ def magnet_sensor():
 # function to call the buzzer
 def set_buzzer():
     GPIO.output(buzzer, GPIO.HIGH)
-    sleep(0.5)
+    sleep(0.25)
     GPIO.output(buzzer, GPIO.LOW)
     sleep(0.5)
 
@@ -109,8 +112,15 @@ def main():
                         break
                     sleep(0.5)
             my_keypad = Keypad()
-            myString = my_keypad.read_keypad()
-            print(myString)
+            my_string = my_keypad.read_keypad()
+            if my_string == "CAB":
+                for i in range(3):
+                    set_buzzer()
+                print("camera started recording")
+                piCam.start_and_record_video("test.mp4", duration=5)
+                print("camera finished recording")
+            else:
+                print(f"{my_string} is Wrong password")
             if distance > 1 and motion == 0:
                 GPIO.output(firstGreenLedPin, 0)
                 GPIO.output(secondGreenLedPin, 0)
