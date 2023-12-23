@@ -1,5 +1,7 @@
 import RPi.GPIO as GPIO
-import time
+from time import sleep, time
+from keypad_lib import Keypad
+from picamera2 import  Picamera2
 
 GPIO.cleanup()
 
@@ -15,7 +17,7 @@ GPIO.setup(echoPin, GPIO.IN)
 # set the PIR sensor input Pin to pin 12 
 pirInputPin = 12
 GPIO.setup(pirInputPin, GPIO.IN)
-time.sleep(10)
+sleep(10)
 
 # set the Magnet Door Lock Pin
 magnetPin = 11
@@ -29,23 +31,26 @@ GPIO.setup(firstGreenLedPin, GPIO.OUT)
 GPIO.setup(secondGreenLedPin, GPIO.OUT)
 GPIO.setup(redLedPin, GPIO.OUT)
 
-#set the buzzer pin
+# set the buzzer pin
 buzzer = 13
 GPIO.setup(buzzer, GPIO.OUT)
 
-#set the IR sensor pin
+# set the IR sensor pin
 irSensor = 15
 GPIO.setup(irSensor, GPIO.IN)
+
+# set the camera
+piCam = Picamera2()
 
 # function to call the ultrasonic sensor
 def ultra_sonic_sensor():
     # send the signals from the trigger pin
     # set the trigPin by 0 for 2 Micro Second (E-6 refers to Micro Second)
     GPIO.output(trigPin, 0)
-    time.sleep(2E-6)
+    sleep(2E-6)
     # set the trigPin by 1 for 10 Micro Second (E-6 refers to Micro Second)
     GPIO.output(trigPin, 1)
-    time.sleep(10E-6)
+    sleep(10E-6)
     # set the trigPin by 0 again
     GPIO.output(trigPin, 0)
 
@@ -53,12 +58,12 @@ def ultra_sonic_sensor():
     # wait while the reading from echoPin = 0
     while GPIO.input(echoPin) == 0:
         pass
-    echo_start_time = time.time()  # read the start time
+    echo_start_time = time()  # read the start time
 
     # wait while the reading from echoPin = 1
     while GPIO.input(echoPin) == 1:
         pass
-    echo_stop_time = time.time()  # read the stop time
+    echo_stop_time = time()  # read the stop time
 
     ptt = echo_stop_time - echo_start_time  # calculate the ping travel time
 
@@ -73,21 +78,24 @@ def pir_sensor():
     return motion
 
 
-#function to call the magnet sensor
+# function to call the magnet sensor
 def magnet_sensor():
     opened = GPIO.input(magnetPin)
     return opened
 
-#function to call the buzzer
+
+# function to call the buzzer
 def set_buzzer():
     GPIO.output(buzzer, GPIO.HIGH)
-    time.sleep(0.5)
+    sleep(0.25)
     GPIO.output(buzzer, GPIO.LOW)
-    time.sleep(0.5)
+    sleep(0.5)
+
 
 def ir_sensor():
     ir = GPIO.input(irSensor)
     return ir
+
 
 # define the main function (The Entry Point of the program)
 # in this function it will call all sensor's function and handle the logic calling
@@ -95,18 +103,24 @@ def main():
     try:
         while True:
             distance = ultra_sonic_sensor()
-            motion = ir_sensor()
+            motion = pir_sensor()
             opened = magnet_sensor()
-            if opened == 0 :
-                print("closed")
-            else :
-                print("opened")
+            if opened == 1:
                 while True:
                     set_buzzer()
-                    if magnet_sensor() == 0 :
+                    if magnet_sensor() == 0:
                         break
-                    time.sleep(0.5)
-
+                    sleep(0.5)
+            my_keypad = Keypad()
+            my_string = my_keypad.read_keypad()
+            if my_string == "CAB":
+                for i in range(3):
+                    set_buzzer()
+                print("camera started recording")
+                piCam.start_and_record_video("test.mp4", duration=5)
+                print("camera finished recording")
+            else:
+                print(f"{my_string} is Wrong password")
             if distance > 1 and motion == 0:
                 GPIO.output(firstGreenLedPin, 0)
                 GPIO.output(secondGreenLedPin, 0)
@@ -124,7 +138,7 @@ def main():
                 GPIO.output(secondGreenLedPin, 1)
                 GPIO.output(redLedPin, 0)
 
-            time.sleep(0.2)
+            sleep(0.2)
     except KeyboardInterrupt():
         GPIO.output(secondGreenLedPin, 0)
         GPIO.cleanup()
