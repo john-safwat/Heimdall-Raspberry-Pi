@@ -1,6 +1,8 @@
 import RPi.GPIO as GPIO
 from time import sleep, time
+from keypad_lib import Keypad
 from picamera2 import Picamera2
+import pyrebase
 
 GPIO.cleanup()
 
@@ -38,6 +40,8 @@ characters = [["1", "2", "3", "A"],
               ["7", "8", "9", "C"],
               ["*", "0", "#", "D"]]
 
+lock_id: str = "id"
+
 # setup GPIO pins
 GPIO.setup(trig_pin, GPIO.OUT)
 GPIO.setup(echo_pin, GPIO.IN)
@@ -58,6 +62,50 @@ GPIO.setup(cols[0], GPIO.IN, pull_up_down=GPIO.PUD_UP)
 GPIO.setup(cols[1], GPIO.IN, pull_up_down=GPIO.PUD_UP)
 GPIO.setup(cols[2], GPIO.IN, pull_up_down=GPIO.PUD_UP)
 GPIO.setup(cols[3], GPIO.IN, pull_up_down=GPIO.PUD_UP)
+
+firebase_config = {
+    "apiKey": "AIzaSyD7BJiwIa7J2llFnmYe-eHTtKJi11gnBxc",
+    "authDomain": "heimdall-5aecb.firebaseapp.com",
+    "databaseURL": "https://heimdall-5aecb-default-rtdb.firebaseio.com",
+    "projectId": "heimdall-5aecb",
+    "storageBucket": "heimdall-5aecb.appspot.com",
+    "messagingSenderId": "162564554099",
+    "appId": "1:162564554099:web:7d8d43779925e659d1d906",
+    "measurementId": "G-YJY39SDG6Z"
+}
+
+# initialize pyrebase
+pyre_firebase = pyrebase.initialize_app(firebase_config)
+
+# initialize pyrebase auth
+pyre_auth = pyre_firebase.auth()
+
+# initialize pyrebase database
+pyrebase_database = pyre_firebase.database()
+
+
+# login function
+def login():
+    print("Login")
+    email = input("enter your email : ")
+    password = input("enter your password : ")
+    login_user = pyre_auth.sign_in_with_email_and_password(email, password)
+    print("Successfully logged in!")
+    return login_user['localId']
+
+
+# stream handler function (listener)
+def stream_handler(message):
+    if message["path"] == "/opened":
+        if message["data"]:
+            open_door()
+        else:
+            close_door()
+
+    print("-------------------")
+    print(message["event"])  # put
+    print(message["path"])  # /uid
+    print(message["data"])  # true or flase
 
 
 # function to call the ultrasonic sensor
@@ -119,17 +167,18 @@ def set_buzzer():
 # function to open the door
 def open_door():
     GPIO.output(lock, 1)
+    pyrebase_database.child(f"Locks/{lock_id}/opened").set(True)
 
 
 # function to close the door
 def close_door():
     GPIO.output(lock, 0)
+    pyrebase_database.child(f"Locks/{lock_id}/opened").set(False)
 
 
 # function to read each row and each column
 def read_keypad(last_key, password):
     key = ""
-    print(last_key == key)
     for i in range(0, 3):
         GPIO.output(rows[i], GPIO.LOW)
         for j in range(0, 3):
@@ -171,12 +220,10 @@ def main():
             # get the reads from the sensors and the keypad
             password, last_Key = read_keypad(last_Key, password)
             password = password_validation(password)
-            print(f"the password {password}")
             ultra_sonic = ultra_sonic_sensor()
             irRead = ir_sensor()
             pirRead = pir_sensor()
             magnetRead = magnet_sensor()
-            print("---------------------------")
 
             # change the light state depend on the sensors read
             if ultra_sonic < 0.5:
@@ -204,4 +251,7 @@ def main():
 
 
 if __name__ == '__main__':
+    lock_id = login()
+    print(lock_id)
+    my_stream = pyrebase_database.child(f"Locks/{lock_id}").stream(stream_handler)
     main()
