@@ -39,8 +39,8 @@ characters = [["1", "2", "3", "A"],
               ["4", "5", "6", "B"],
               ["7", "8", "9", "C"],
               ["*", "0", "#", "D"]]
-
-lock_id: str = "id"
+              
+lock_id :str = "id"
 
 # setup GPIO pins
 GPIO.setup(trig_pin, GPIO.OUT)
@@ -101,7 +101,7 @@ def stream_handler(message):
             open_door()
         else:
             close_door()
-
+            
     print("-------------------")
     print(message["event"])  # put
     print(message["path"])  # /uid
@@ -220,6 +220,7 @@ def main():
             # get the reads from the sensors and the keypad
             password, last_Key = read_keypad(last_Key, password)
             password = password_validation(password)
+            print(password)
             ultra_sonic = ultra_sonic_sensor()
             irRead = ir_sensor()
             pirRead = pir_sensor()
@@ -244,6 +245,8 @@ def main():
             # if the door is opened the lock is opened
             if not magnetRead:
                 close_door()
+            else :
+                open_door()
             sleep(0.1)
     except KeyboardInterrupt():
         GPIO.cleanup()
