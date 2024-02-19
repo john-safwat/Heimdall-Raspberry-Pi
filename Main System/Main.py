@@ -1,14 +1,39 @@
 import RPi.GPIO as GPIO
 from time import sleep, time
-from keypad_lib import Keypad
 from picamera2 import Picamera2
+from firebase_admin import db
 import pyrebase
+import cv2
+import random
+import string
+import datetime
 
 GPIO.cleanup()
 
 GPIO.setwarnings(False)
 # set up the GPIO Numbering Mode To Board (Position of the Pin on The Board)
 GPIO.setmode(GPIO.BOARD)
+
+firebase_config = {
+    "apiKey": "AIzaSyD7BJiwIa7J2llFnmYe-eHTtKJi11gnBxc",
+    "authDomain": "heimdall-5aecb.firebaseapp.com",
+    "databaseURL": "https://heimdall-5aecb-default-rtdb.firebaseio.com",
+    "projectId": "heimdall-5aecb",
+    "storageBucket": "heimdall-5aecb.appspot.com",
+    "messagingSenderId": "162564554099",
+    "appId": "1:162564554099:web:7d8d43779925e659d1d906",
+    "measurementId": "G-YJY39SDG6Z",
+    "serviceAccount": "heimdall.json",
+}
+
+# initialize pyrebase
+pyrebase_firebase = pyrebase.initialize_app(firebase_config)
+# initialize pyrebase auth
+pyrebase_auth = pyrebase_firebase.auth()
+# initialize pyrebase database
+pyrebase_database = pyrebase_firebase.database()
+# initialize pyrebase storage
+pyrebase_storage = pyrebase_firebase.storage()
 
 # define the variables
 # set the pins for the ultrasonic sensor (Trigger Pin Out & Echo Pin In)
@@ -39,8 +64,12 @@ characters = [["1", "2", "3", "A"],
               ["4", "5", "6", "B"],
               ["7", "8", "9", "C"],
               ["*", "0", "#", "D"]]
-              
-lock_id :str = "id"
+
+# the local data
+lock_id: str = "id"
+token: str = "token"
+password: str = "password"
+last_capture_time = datetime.datetime.now()
 
 # setup GPIO pins
 GPIO.setup(trig_pin, GPIO.OUT)
@@ -62,50 +91,60 @@ GPIO.setup(cols[0], GPIO.IN, pull_up_down=GPIO.PUD_UP)
 GPIO.setup(cols[1], GPIO.IN, pull_up_down=GPIO.PUD_UP)
 GPIO.setup(cols[2], GPIO.IN, pull_up_down=GPIO.PUD_UP)
 GPIO.setup(cols[3], GPIO.IN, pull_up_down=GPIO.PUD_UP)
+# camera setup
+piCam = Picamera2()
+# set the resolution of the camera
+piCam.preview_configuration.main.size = (640, 360)
+piCam.preview_configuration.main.format = "RGB888"  # we use RGB888 because opencv uses BGR
+piCam.preview_configuration.align()
+piCam.configure("preview")
+piCam.start()
+# Initialize camera
+cap = cv2.VideoCapture(0)  # Change number for different camera indices
 
-firebase_config = {
-    "apiKey": "AIzaSyD7BJiwIa7J2llFnmYe-eHTtKJi11gnBxc",
-    "authDomain": "heimdall-5aecb.firebaseapp.com",
-    "databaseURL": "https://heimdall-5aecb-default-rtdb.firebaseio.com",
-    "projectId": "heimdall-5aecb",
-    "storageBucket": "heimdall-5aecb.appspot.com",
-    "messagingSenderId": "162564554099",
-    "appId": "1:162564554099:web:7d8d43779925e659d1d906",
-    "measurementId": "G-YJY39SDG6Z"
-}
+# Load pre-trained face detector
+face_cascade = cv2.CascadeClassifier('haarcascade_frontalface_default.xml')
 
-# initialize pyrebase
-pyre_firebase = pyrebase.initialize_app(firebase_config)
 
-# initialize pyrebase auth
-pyre_auth = pyre_firebase.auth()
+def random_string_generator():
+    return ''.join(random.choice(string.ascii_lowercase) for _ in range(10))
 
-# initialize pyrebase database
-pyrebase_database = pyre_firebase.database()
+
+def is_time_difference_2_minutes(time1, time2):
+    time_diff = abs(time1 - time2)
+    minutes_diff = time_diff.total_seconds() / 60
+    return 2 <= minutes_diff
 
 
 # login function
 def login():
+    global token
+    global lock_id
+
     print("Login")
     email = input("enter your email : ")
-    password = input("enter your password : ")
-    login_user = pyre_auth.sign_in_with_email_and_password(email, password)
+    loc_password = input("enter your password : ")
+    login_user = pyrebase_auth.sign_in_with_email_and_password(email, loc_password)
     print("Successfully logged in!")
-    return login_user['localId']
+    lock_id = login_user['localId']
+    token = login_user["idToken"]
+    print(lock_id)
 
 
 # stream handler function (listener)
 def stream_handler(message):
+    global password
     if message["path"] == "/opened":
         if message["data"]:
             open_door()
         else:
             close_door()
-            
+    if message["path"] == "/password":
+        password = message["data"]
     print("-------------------")
     print(message["event"])  # put
     print(message["path"])  # /uid
-    print(message["data"])  # true or flase
+    print(message["data"])  # true or false
 
 
 # function to call the ultrasonic sensor
@@ -177,75 +216,94 @@ def close_door():
 
 
 # function to read each row and each column
-def read_keypad(last_key, password):
+def read_keypad(last_key, user_password):
     key = ""
+    # loop on the 4 rows and columns to get the input
     for i in range(0, 3):
         GPIO.output(rows[i], GPIO.LOW)
         for j in range(0, 3):
             if GPIO.input(cols[j]) == GPIO.LOW:
                 key = characters[i][j]
         GPIO.output(rows[i], GPIO.HIGH)
-
+    # check if is equal to the last pressed key
     if key != last_key:
         last_key = key
-        password = password + key
-    return password, last_key
+        user_password = user_password + key
+    return user_password, last_key
 
 
 # function to validate on password
-def password_validation(password: str):
-    if len(password) == 4:
-        if password == "1234":
+def password_validation(user_password: str):
+    global password
+    if len(user_password) == len(password):
+        if user_password == password:
             open_door()
-            password = ""
+            user_password = ""
         else:
             set_buzzer()
             set_buzzer()
             set_buzzer()
-            password = ""
-    elif len(password) > 4:
-        password = ""
+            user_password = ""
+    elif len(user_password) > len(password):
+        user_password = ""
 
-    return password
+    return user_password
 
 
 # define the main function (The Entry Point of the program)
 # in this function it will call all sensor's function and handle the logic calling
 def main():
+    global last_capture_time
     # define the password
-    password = ""
+    user_password = ""
     last_Key = ""
+    images = []
+    urls = []
     try:
         while True:
             # get the reads from the sensors and the keypad
-            password, last_Key = read_keypad(last_Key, password)
-            password = password_validation(password)
-            print(password)
+            user_password, last_Key = read_keypad(last_Key, user_password)
+            user_password = password_validation(user_password)
+            print(user_password)
             ultra_sonic = ultra_sonic_sensor()
             irRead = ir_sensor()
             pirRead = pir_sensor()
             magnetRead = magnet_sensor()
 
             # change the light state depend on the sensors read
-            if ultra_sonic < 0.5:
-                GPIO.output(first_green_led_pin, 1)
-            else:
-                GPIO.output(first_green_led_pin, 0)
+            if (ultra_sonic < 0.5 and irRead) or (irRead and pirRead) or (ultra_sonic < 0.5 and pirRead):
+                for i in range(50):
+                    frame = piCam.capture_array()
+                    # Convert to grayscale for efficiency
+                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    # Detect faces
+                    faces = face_cascade.detectMultiScale(gray, 1.1, 4)
 
-            if not irRead:
-                GPIO.output(second_green_led_pin, 1)
-            else:
-                GPIO.output(second_green_led_pin, 0)
+                    for (x, y, w, h) in faces:
+                        cv2.rectangle(frame, (x, y), (x + w, y + h), (252, 207, 32), 1)
+                        key = cv2.waitKey(1) & 0xFF
+                        image_name = random_string_generator()
+                        images.append(image_name)
+                        # Capture image using cv2.imwrite()
+                        cv2.imwrite(f'images/{image_name}.jpg', frame)
 
-            if pirRead:
-                GPIO.output(third_green_led_pin, 1)
-            else:
-                GPIO.output(third_green_led_pin, 0)
+                    # Display frame
+                    cv2.imshow('User Image', frame)
+                # Release resources
+                cap.release()
+                cv2.destroyAllWindows()
+                if not is_time_difference_2_minutes(last_capture_time, datetime.datetime.now()):
+                    for i in range(len(images)):
+                        pyrebase_storage.child(f"taked/{images[i]}.jpg").put(f'images/{images[i]}.jpg')
+                        url = pyrebase_storage.child(f"taked/{images[i]}.jpg").get_url(token)
+                        urls.append(url)
+                    print(urls)
+                    last_capture_time = datetime.datetime.now()
 
             # if the door is opened the lock is opened
             if not magnetRead:
                 close_door()
-            else :
+            else:
                 open_door()
             sleep(0.1)
     except KeyboardInterrupt():
@@ -254,7 +312,13 @@ def main():
 
 
 if __name__ == '__main__':
-    lock_id = login()
-    print(lock_id)
+    login()
     my_stream = pyrebase_database.child(f"Locks/{lock_id}").stream(stream_handler)
+    data = pyrebase_database.child(f"Locks/{lock_id}/password").get(token)
+    password = data.val()
     main()
+
+
+#1994640082@heimdall.com
+
+#123123123
