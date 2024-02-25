@@ -71,6 +71,9 @@ token: str = "token"
 password: str = "password"
 last_capture_time = datetime.datetime.now()
 
+# configurations Variables
+alert_counter = 600
+
 # setup GPIO pins
 GPIO.setup(trig_pin, GPIO.OUT)
 GPIO.setup(echo_pin, GPIO.IN)
@@ -99,21 +102,17 @@ piCam.preview_configuration.main.format = "RGB888"  # we use RGB888 because open
 piCam.preview_configuration.align()
 piCam.configure("preview")
 piCam.start()
-# Initialize camera
-cap = cv2.VideoCapture(0)  # Change number for different camera indices
 
+# set up camera object
+cap = cv2.VideoCapture(0)
 # Load pre-trained face detector
 face_cascade = cv2.CascadeClassifier('haarcascade_frontalface_default.xml')
+# QR code detection object
+detector = cv2.QRCodeDetector()
 
 
 def random_string_generator():
-    return ''.join(random.choice(string.ascii_lowercase) for _ in range(10))
-
-
-def is_time_difference_2_minutes(time1, time2):
-    time_diff = abs(time1 - time2)
-    minutes_diff = time_diff.total_seconds() / 60
-    return 2 <= minutes_diff
+    return ''.join(random.choice(string.ascii_lowercase) for _ in range(20))
 
 
 # login function
@@ -122,8 +121,10 @@ def login():
     global lock_id
 
     print("Login")
-    email = input("enter your email : ")
-    loc_password = input("enter your password : ")
+    # email = input("enter your email : ")
+    # loc_password = input("enter your password : ")
+    email = "1994640082@heimdall.com"
+    loc_password = "123123123"
     login_user = pyrebase_auth.sign_in_with_email_and_password(email, loc_password)
     print("Successfully logged in!")
     lock_id = login_user['localId']
@@ -207,6 +208,7 @@ def set_buzzer():
 def open_door():
     GPIO.output(lock, 1)
     pyrebase_database.child(f"Locks/{lock_id}/opened").set(True)
+    sleep(2)
 
 
 # function to close the door
@@ -250,10 +252,64 @@ def password_validation(user_password: str):
     return user_password
 
 
+def captureImages():
+    images = []
+    for i in range(30):
+        frame = piCam.capture_array()
+        # Convert to grayscale for efficiency
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        # Detect faces
+        faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+
+        for (x, y, w, h) in faces:
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (252, 207, 32), 1)
+            key = cv2.waitKey(1) & 0xFF
+            image_name = random_string_generator()
+            images.append(image_name)
+            # Capture image using cv2.imwrite()
+            cv2.imwrite(f'images/{image_name}.jpg', frame)
+
+        # Display frame
+        cv2.imshow('User Image', frame)
+    # Release resources
+    cv2.destroyAllWindows()
+    return images
+
+
+def uploadImages(images):
+    global alert_counter
+    urls = []
+    for i in range(len(images)):
+        pyrebase_storage.child(f"taked/{images[i]}.jpg").put(f'images/{images[i]}.jpg')
+        url = pyrebase_storage.child(f"taked/{images[i]}.jpg").get_url(token)
+        urls.append(url)
+    print(urls)
+    alert_counter = 0
+    return urls
+
+
+def qr_code_scanning():
+    try:
+        _, img = piCam.capture_array()
+        # detect and decode
+        data, bbox, _ = detector.detectAndDecode(img)
+        # check if there is a QRCode in the image
+        if data:
+            print(data)
+        # Below will display the live camera feed to the Desktop on Raspberry Pi OS preview
+        cv2.imshow("code detector", img)
+        # When the code is stopped the below closes all the applications/windows that the above has created
+        cap.release()
+        cv2.destroyAllWindows()
+    except Exception as e:
+        print("Error reading frame:", e)
+
+
 # define the main function (The Entry Point of the program)
 # in this function it will call all sensor's function and handle the logic calling
 def main():
     global last_capture_time
+    global alert_counter
     # define the password
     user_password = ""
     last_Key = ""
@@ -266,45 +322,30 @@ def main():
             user_password = password_validation(user_password)
             print(user_password)
             ultra_sonic = ultra_sonic_sensor()
-            irRead = ir_sensor()
+            irRead = not ir_sensor()
             pirRead = pir_sensor()
             magnetRead = magnet_sensor()
+            print(f"Ultrasonic - {ultra_sonic}")
+            print(f"PIR - {pirRead}")
+            print(f"IR - {irRead}")
+            print(f"Counter - {alert_counter}")
 
             # change the light state depend on the sensors read
-            if (ultra_sonic < 0.5 and irRead) or (irRead and pirRead) or (ultra_sonic < 0.5 and pirRead):
-                for i in range(50):
-                    frame = piCam.capture_array()
-                    # Convert to grayscale for efficiency
-                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                    # Detect faces
-                    faces = face_cascade.detectMultiScale(gray, 1.1, 4)
-
-                    for (x, y, w, h) in faces:
-                        cv2.rectangle(frame, (x, y), (x + w, y + h), (252, 207, 32), 1)
-                        key = cv2.waitKey(1) & 0xFF
-                        image_name = random_string_generator()
-                        images.append(image_name)
-                        # Capture image using cv2.imwrite()
-                        cv2.imwrite(f'images/{image_name}.jpg', frame)
-
-                    # Display frame
-                    cv2.imshow('User Image', frame)
-                # Release resources
-                cap.release()
-                cv2.destroyAllWindows()
-                if not is_time_difference_2_minutes(last_capture_time, datetime.datetime.now()):
-                    for i in range(len(images)):
-                        pyrebase_storage.child(f"taked/{images[i]}.jpg").put(f'images/{images[i]}.jpg')
-                        url = pyrebase_storage.child(f"taked/{images[i]}.jpg").get_url(token)
-                        urls.append(url)
+            if (ultra_sonic < 1 and irRead) or (irRead and pirRead) or (ultra_sonic < 1 and pirRead):
+                if alert_counter > 400:
+                    images = captureImages()
+                    urls = uploadImages(images)
                     print(urls)
-                    last_capture_time = datetime.datetime.now()
+
+            qr_code_scanning()
 
             # if the door is opened the lock is opened
             if not magnetRead:
                 close_door()
             else:
                 open_door()
+
+            alert_counter += 1
             sleep(0.1)
     except KeyboardInterrupt():
         GPIO.cleanup()
@@ -314,11 +355,6 @@ def main():
 if __name__ == '__main__':
     login()
     my_stream = pyrebase_database.child(f"Locks/{lock_id}").stream(stream_handler)
-    data = pyrebase_database.child(f"Locks/{lock_id}/password").get(token)
-    password = data.val()
+    lock_document = pyrebase_database.child(f"Locks/{lock_id}/password").get(token)
+    password = lock_document.val()
     main()
-
-
-#1994640082@heimdall.com
-
-#123123123
