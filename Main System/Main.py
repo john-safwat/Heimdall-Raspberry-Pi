@@ -124,8 +124,8 @@ def login():
     # email = input("enter your email : ")
     # loc_password = input("enter your password : ")
     email = "1994640082@heimdall.com"
-    loc_password = "123123123"
-    login_user = pyrebase_auth.sign_in_with_email_and_password(email, loc_password)
+    lock_password = "123123123"
+    login_user = pyrebase_auth.sign_in_with_email_and_password(email, lock_password)
     print("Successfully logged in!")
     lock_id = login_user['localId']
     token = login_user["idToken"]
@@ -268,9 +268,10 @@ def captureImages():
             images.append(image_name)
             # Capture image using cv2.imwrite()
             cv2.imwrite(f'images/{image_name}.jpg', frame)
+            print("face detected")
 
         # Display frame
-        cv2.imshow('User Image', frame)
+        # cv2.imshow('User Image', frame)
     # Release resources
     cv2.destroyAllWindows()
     return images
@@ -291,13 +292,14 @@ def uploadImages(images):
 def qr_code_scanning():
     try:
         _, img = piCam.capture_array()
+        img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
         # detect and decode
         data, bbox, _ = detector.detectAndDecode(img)
         # check if there is a QRCode in the image
         if data:
             print(data)
         # Below will display the live camera feed to the Desktop on Raspberry Pi OS preview
-        cv2.imshow("code detector", img)
+        # cv2.imshow("code detector", img)
         # When the code is stopped the below closes all the applications/windows that the above has created
         cap.release()
         cv2.destroyAllWindows()
@@ -337,7 +339,18 @@ def main():
                     urls = uploadImages(images)
                     print(urls)
 
-            qr_code_scanning()
+            # qr_code_scanning()
+            frame = piCam.capture_array()
+            # Convert to grayscale for efficiency
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            # Detect faces
+            faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+
+            for (x, y, w, h) in faces:
+                cv2.rectangle(frame, (x, y), (x + w, y + h), (252, 207, 32), 1)
+                key = cv2.waitKey(1) & 0xFF
+                if y+h > 300:
+                    set_buzzer()
 
             # if the door is opened the lock is opened
             if not magnetRead:
