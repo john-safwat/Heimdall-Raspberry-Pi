@@ -45,10 +45,6 @@ pir_input_pin = 12
 magnet_pin = 11
 # set the IR sensor pin
 ir_pin = 15
-# set the indicator LEDs pins
-first_green_led_pin = 3
-second_green_led_pin = 5
-third_green_led_pin = 7
 # set the buzzer pin
 buzzer = 13
 # setup the lock
@@ -81,9 +77,6 @@ GPIO.setup(pir_input_pin, GPIO.IN)
 sleep(10)
 GPIO.setup(magnet_pin, GPIO.IN)
 GPIO.setup(ir_pin, GPIO.IN)
-GPIO.setup(first_green_led_pin, GPIO.OUT)
-GPIO.setup(second_green_led_pin, GPIO.OUT)
-GPIO.setup(third_green_led_pin, GPIO.OUT)
 GPIO.setup(buzzer, GPIO.OUT)
 GPIO.setup(lock, GPIO.OUT)
 GPIO.setup(rows[0], GPIO.OUT)
@@ -103,12 +96,8 @@ piCam.preview_configuration.align()
 piCam.configure("preview")
 piCam.start()
 
-# set up camera object
-cap = cv2.VideoCapture(0)
 # Load pre-trained face detector
 face_cascade = cv2.CascadeClassifier('haarcascade_frontalface_default.xml')
-# QR code detection object
-detector = cv2.QRCodeDetector()
 
 
 def random_string_generator():
@@ -119,7 +108,6 @@ def random_string_generator():
 def login():
     global token
     global lock_id
-
     print("Login")
     # email = input("enter your email : ")
     # loc_password = input("enter your password : ")
@@ -289,24 +277,6 @@ def uploadImages(images):
     return urls
 
 
-def qr_code_scanning():
-    try:
-        _, img = piCam.capture_array()
-        img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-        # detect and decode
-        data, bbox, _ = detector.detectAndDecode(img)
-        # check if there is a QRCode in the image
-        if data:
-            print(data)
-        # Below will display the live camera feed to the Desktop on Raspberry Pi OS preview
-        # cv2.imshow("code detector", img)
-        # When the code is stopped the below closes all the applications/windows that the above has created
-        cap.release()
-        cv2.destroyAllWindows()
-    except Exception as e:
-        print("Error reading frame:", e)
-
-
 # define the main function (The Entry Point of the program)
 # in this function it will call all sensor's function and handle the logic calling
 def main():
@@ -349,7 +319,7 @@ def main():
             for (x, y, w, h) in faces:
                 cv2.rectangle(frame, (x, y), (x + w, y + h), (252, 207, 32), 1)
                 key = cv2.waitKey(1) & 0xFF
-                if y+h > 300:
+                if y + h > 300:
                     set_buzzer()
 
             # if the door is opened the lock is opened
