@@ -7,6 +7,7 @@ import cv2
 import random
 import string
 import datetime
+import threading
 
 GPIO.cleanup()
 
@@ -65,6 +66,8 @@ characters = [["1", "2", "3", "A"],
 lock_id: str = "id"
 token: str = "token"
 password: str = "password"
+y1: int = 0
+y2: int = 0
 last_capture_time = datetime.datetime.now()
 
 # configurations Variables
@@ -266,14 +269,12 @@ def captureImages():
 
 
 def uploadImages(images):
-    global alert_counter
     urls = []
     for i in range(len(images)):
-        pyrebase_storage.child(f"taked/{images[i]}.jpg").put(f'images/{images[i]}.jpg')
-        url = pyrebase_storage.child(f"taked/{images[i]}.jpg").get_url(token)
+        pyrebase_storage.child(f"captures/{images[i]}.jpg").put(f'images/{images[i]}.jpg')
+        url = pyrebase_storage.child(f"captures/{images[i]}.jpg").get_url(token)
         urls.append(url)
     print(urls)
-    alert_counter = 0
     return urls
 
 
@@ -303,11 +304,15 @@ def main():
             print(f"Counter - {alert_counter}")
 
             # change the light state depend on the sensors read
-            if (ultra_sonic < 1 and irRead) or (irRead and pirRead) or (ultra_sonic < 1 and pirRead):
+            if (ultra_sonic < 1) or pirRead or irRead:
                 if alert_counter > 400:
                     images = captureImages()
-                    urls = uploadImages(images)
-                    print(urls)
+                    if len(images) == 0:
+                        alert_counter = 0
+                        images = captureImages()
+                        thread = threading.Thread(target=uploadImages, args=(images,))
+                        thread.start()
+                        print(urls)
 
             # qr_code_scanning()
             frame = piCam.capture_array()
@@ -340,4 +345,8 @@ if __name__ == '__main__':
     my_stream = pyrebase_database.child(f"Locks/{lock_id}").stream(stream_handler)
     lock_document = pyrebase_database.child(f"Locks/{lock_id}/password").get(token)
     password = lock_document.val()
+    coordinate1 = pyrebase_database.child(f"Locks/{lock_id}/y1_value").get(token)
+    y1 = coordinate1.val()
+    coordinate2 = pyrebase_database.child(f"Locks/{lock_id}/y2_value").get(token)
+    y2 = coordinate2.val()
     main()
