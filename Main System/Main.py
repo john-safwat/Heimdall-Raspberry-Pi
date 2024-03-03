@@ -68,10 +68,13 @@ token: str = "token"
 password: str = "password"
 y1: int = 0
 y2: int = 0
-last_capture_time = datetime.datetime.now()
 
 # configurations Variables
 alert_counter = 600
+opened: bool = True
+login_error_message: str = ""
+image_uploading_error: str = ""
+updating_state_error: str = ""
 
 # setup GPIO pins
 GPIO.setup(trig_pin, GPIO.OUT)
@@ -111,16 +114,21 @@ def random_string_generator():
 def login():
     global token
     global lock_id
-    print("Login")
-    # email = input("enter your email : ")
-    # loc_password = input("enter your password : ")
-    email = "8012007513@heimdall.com"
-    lock_password = "123123123"
-    login_user = pyrebase_auth.sign_in_with_email_and_password(email, lock_password)
-    print("Successfully logged in!")
-    lock_id = login_user['localId']
-    token = login_user["idToken"]
-    print(lock_id)
+    global login_error_message
+    try:
+        print("Login")
+        with open('auth_data.txt', 'r') as file:
+            email_and_password = file.read().split("\n")
+            print(email_and_password)
+            email = email_and_password[0]
+            lock_password = email_and_password[1]
+            login_user = pyrebase_auth.sign_in_with_email_and_password(email, lock_password)
+            print("Successfully logged in!")
+            lock_id = login_user['localId']
+            token = login_user["idToken"]
+            print(lock_id)
+    except Exception as e:
+        login_error_message = str(e)
 
 
 # stream handler function (listener)
@@ -177,8 +185,8 @@ def pir_sensor():
 
 # function to call the magnet sensor
 def magnet_sensor():
-    opened = GPIO.input(magnet_pin)
-    return opened
+    magnet_read = GPIO.input(magnet_pin)
+    return magnet_read
 
 
 # function to call the ir sensor
@@ -197,15 +205,30 @@ def set_buzzer():
 
 # function to open the door
 def open_door():
-    GPIO.output(lock, 1)
-    pyrebase_database.child(f"Locks/{lock_id}/opened").set(True)
-    sleep(2)
+    global opened
+    global updating_state_error
+    if not opened:
+        GPIO.output(lock, 1)
+        try:
+            pyrebase_database.child(f"Locks/{lock_id}/opened").set(True)
+        except Exception as e:
+            updating_state_error = str(e)
+
+        sleep(2)
+        opened = not opened
 
 
 # function to close the door
 def close_door():
-    GPIO.output(lock, 0)
-    pyrebase_database.child(f"Locks/{lock_id}/opened").set(False)
+    global opened
+    global updating_state_error
+    if opened:
+        GPIO.output(lock, 0)
+        try:
+            pyrebase_database.child(f"Locks/{lock_id}/opened").set(False)
+        except Exception as e:
+            updating_state_error = str(e)
+        opened = not opened
 
 
 # function to read each row and each column
@@ -257,7 +280,7 @@ def captureImages():
             key = cv2.waitKey(1) & 0xFF
             image_name = random_string_generator()
             images.append(image_name)
-            # Capture image using cv2.imwrite()
+            # Capture image using cv2.imWrite()
             cv2.imwrite(f'images/{image_name}.jpg', frame)
             print("face detected")
 
@@ -278,12 +301,10 @@ def uploadImages(images):
 # define the main function (The Entry Point of the program)
 # in this function it will call all sensor's function and handle the logic calling
 def main():
-    global last_capture_time
     global alert_counter
     # define the password
     user_password = ""
     last_Key = ""
-    images = []
     urls = []
     try:
         while True:
