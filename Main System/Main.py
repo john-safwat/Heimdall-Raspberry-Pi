@@ -68,6 +68,8 @@ token: str = "token"
 password: str = "password"
 y1: int = 0
 y2: int = 0
+x1: int = 640
+x2: int = 0
 
 # configurations Variables
 alert_counter = 600
@@ -112,9 +114,7 @@ def random_string_generator():
 
 # login function
 def login():
-    global token
-    global lock_id
-    global login_error_message
+    global token, lock_id, login_error_message
     try:
         print("Login")
         with open('auth_data.txt', 'r') as file:
@@ -131,9 +131,24 @@ def login():
         login_error_message = str(e)
 
 
+def setup_lock_configuration():
+    global password, y1, y2, x1, x2
+    my_stream = pyrebase_database.child(f"Locks/{lock_id}").stream(stream_handler)
+    lock_document = pyrebase_database.child(f"Locks/{lock_id}/password").get(token)
+    password = lock_document.val()
+    y1_coordinate = pyrebase_database.child(f"Locks/{lock_id}/y1_value").get(token)
+    y1 = y1_coordinate.val()
+    y2_coordinate = pyrebase_database.child(f"Locks/{lock_id}/y2_value").get(token)
+    y2 = y2_coordinate.val()
+    x1_coordinate = pyrebase_database.child(f"Locks/{lock_id}/x1_value").get(token)
+    x1 = x1_coordinate.val()
+    x2_coordinate = pyrebase_database.child(f"Locks/{lock_id}/x2_value").get(token)
+    x2 = x2_coordinate.val()
+
+
 # stream handler function (listener)
 def stream_handler(message):
-    global password
+    global password, y1, y2, x1, x2
     if message["path"] == "/opened":
         if message["data"]:
             open_door()
@@ -141,6 +156,14 @@ def stream_handler(message):
             close_door()
     if message["path"] == "/password":
         password = message["data"]
+    if message["path"] == "/y1_value":
+        y1 = message["data"]
+    if message["path"] == "/y2_value":
+        y2 = message["data"]
+    if message["path"] == "/x1_value":
+        x1 = message["data"]
+    if message["path"] == "/x2_value":
+        x2 = message["data"]
     print("-------------------")
     print(message["event"])  # put
     print(message["path"])  # /uid
@@ -205,8 +228,7 @@ def set_buzzer():
 
 # function to open the door
 def open_door():
-    global opened
-    global updating_state_error
+    global opened, updating_state_error
     if not opened:
         GPIO.output(lock, 1)
         try:
@@ -220,8 +242,7 @@ def open_door():
 
 # function to close the door
 def close_door():
-    global opened
-    global updating_state_error
+    global opened, updating_state_error
     if opened:
         GPIO.output(lock, 0)
         try:
@@ -288,6 +309,69 @@ def captureImages():
     return images
 
 
+def line_intersects_rectangle(p1, p2, r1, r2, c1, c2):
+    """
+    Checks if the line segment defined by points p1 and p2 intersects with the rectangle defined by coordinates (r1,
+    c1), (r2, c1), (r2, c2), and (r1, c2).
+
+    Args:
+        p1: Tuple (x, y) of the starting point of the line segment.
+        p2: Tuple (x, y) of the ending point of the line segment.
+        r1: Float, x-coordinate of the leftmost point of the rectangle.
+        r2: Float, x-coordinate of the rightmost point of the rectangle.
+        c1: Float, y-coordinate of the topmost point of the rectangle.
+        c2: Float, y-coordinate of the bottommost point of the rectangle.
+
+    Returns:
+        True if the line segment intersects the rectangle, False otherwise.
+    """
+
+    # Check if the line segment is completely outside the rectangle
+    if (p1[0] < r1 and p2[0] < r1) or (p1[0] > r2 and p2[0] > r2) or (p1[1] < c2 and p2[1] < c2) or (
+            p1[1] > c1 and p2[1] > c1):
+        return False
+
+    # Check for intersection with each side of the rectangle
+    for x in [r1, r2]:
+        if line_intersects_line(p1, p2, (x, c1), (x, c2)):
+            return True
+
+    for y in [c1, c2]:
+        if line_intersects_line(p1, p2, (r1, y), (r2, y)):
+            return True
+
+    return False
+
+
+def line_intersects_line(p1, p2, q1, q2):
+    """
+    Checks if two line segments defined by points p1, p2 and q1, q2 intersect.
+
+    Args:
+        p1: Tuple (x, y) of the starting point of the first line segment.
+        p2: Tuple (x, y) of the ending point of the first line segment.
+        q1: Tuple (x, y) of the starting point of the second line segment.
+        q2: Tuple (x, y) of the ending point of the second line segment.
+
+    Returns:
+        True if the line segments intersect, False otherwise.
+    """
+
+    # Calculate the denominator to avoid division by zero
+    denominator = (p2[0] - p1[0]) * (q2[1] - q1[1]) - (p2[1] - p1[1]) * (q2[0] - q1[0])
+
+    # Check if lines are parallel
+    if denominator == 0:
+        return False
+
+    # Calculate the intersection point parameters
+    t = ((q2[0] - q1[0]) * (p1[1] - q1[1]) + (q2[1] - q1[1]) * (q1[0] - p1[0])) / denominator
+    u = ((p2[0] - p1[0]) * (p1[1] - q1[1]) + (p2[1] - p1[1]) * (q1[0] - p1[0])) / denominator
+
+    # Check if the intersection point is within the line segments
+    return 0 <= t <= 1 and 0 <= u <= 1
+
+
 def uploadImages(images):
     urls = []
     for i in range(len(images)):
@@ -341,7 +425,7 @@ def main():
             for (x, y, w, h) in faces:
                 cv2.rectangle(frame, (x, y), (x + w, y + h), (252, 207, 32), 1)
                 key = cv2.waitKey(1) & 0xFF
-                if y + h > 300:
+                if line_intersects_rectangle((x1, y1), (x2, y2), x, (x + w), y, (y + h)):
                     print("caught one")
 
             # if the door is opened the lock is opened
@@ -359,11 +443,5 @@ def main():
 
 if __name__ == '__main__':
     login()
-    my_stream = pyrebase_database.child(f"Locks/{lock_id}").stream(stream_handler)
-    lock_document = pyrebase_database.child(f"Locks/{lock_id}/password").get(token)
-    password = lock_document.val()
-    coordinate1 = pyrebase_database.child(f"Locks/{lock_id}/y1_value").get(token)
-    y1 = coordinate1.val()
-    coordinate2 = pyrebase_database.child(f"Locks/{lock_id}/y2_value").get(token)
-    y2 = coordinate2.val()
+    setup_lock_configuration()
     main()
