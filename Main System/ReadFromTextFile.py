@@ -70,13 +70,13 @@ def setup_lock_configuration():
     lock_document = pyrebase_database.child(f"Locks/{lock_id}/password").get(token)
     password = lock_document.val()
     y1_coordinate = pyrebase_database.child(f"Locks/{lock_id}/y1_value").get(token)
-    y1 = float(y1_coordinate.val())
+    y1 = int(y1_coordinate.val())
     y2_coordinate = pyrebase_database.child(f"Locks/{lock_id}/y2_value").get(token)
-    y2 = float(y2_coordinate.val())
+    y2 = int(y2_coordinate.val())
     x1_coordinate = pyrebase_database.child(f"Locks/{lock_id}/x1_value").get(token)
-    x1 = float(x1_coordinate.val())
+    x1 = int(x1_coordinate.val())
     x2_coordinate = pyrebase_database.child(f"Locks/{lock_id}/x2_value").get(token)
-    x2 = float(x2_coordinate.val())
+    x2 = int(x2_coordinate.val())
 
 
 def stream_handler(message):
@@ -102,49 +102,59 @@ def stream_handler(message):
     print(message["data"])  # true or false
 
 
-def line_intersects_rectangle(p1, p2, r1, r2, c1, c2):
-    """
-    Checks if the line segment defined by points p1 and p2 intersects with the rectangle defined by coordinates (r1, c1), (r2, c1), (r2, c2), and (r1, c2).
-
-    Args:
-        p1: Tuple (x, y) of the starting point of the line segment.
-        p2: Tuple (x, y) of the ending point of the line segment.
-        r1: Float, x-coordinate of the leftmost point of the rectangle.
-        r2: Float, x-coordinate of the rightmost point of the rectangle.
-        c1: Float, y-coordinate of the topmost point of the rectangle.
-        c2: Float, y-coordinate of the bottommost point of the rectangle.
-
-    Returns:
-        True if the line segment intersects the rectangle, False otherwise.
-    """
-
-    # Check if any coordinate is invalid (e.g., not a number)
-    if not all(isinstance(x, (int, float)) for x in [p1[0], p1[1], p2[0], p2[1], r1, r2, c1, c2]):
-        raise ValueError("Invalid coordinates provided. All coordinates must be numbers.")
-
-    # Ensure rectangle sides are horizontal and vertical (rephrased for clarity)
-    if r1 != r2 and c1 != c2:
-        raise ValueError("This algorithm requires the rectangle to have horizontal and vertical sides.")
-
-    # Check for trivial cases (revised for conciseness and clarity)
-    if (p1[0] < r1 and p2[0] < r1) or (p1[0] > r2 and p2[0] > r2) or (p1[1] < c2 and p2[1] < c2) or (
-            p1[1] > c1 and p2[1] > c1):
+def is_line_and_rectangle_intersected(x, y, w, h, line1_p1, line1_p2):
+    if are_lines_intersected(line1_p1, line1_p2, (x, y), (x + w, y)):
+        return True
+    elif are_lines_intersected(line1_p1, line1_p2, (x, y), (x, y + h)):
+        return True
+    elif are_lines_intersected(line1_p1, line1_p2, (x, y + h), (x + w, y + h)):
+        return True
+    elif are_lines_intersected(line1_p1, line1_p2, (x + w, y + h), (x + w, y)):
+        return True
+    else:
         return False
 
-    # Efficiently calculate the intersection point parameters
-    denominator = (p2[0] - p1[0]) * (c2 - c1) - (p2[1] - p1[1]) * (r2 - r1)
-    if denominator == 0:  # Check for parallel lines or coincident lines
-        return False  # No intersection
 
-    t = ((c1 - p1[1]) * (r2 - r1) - (c2 - p1[1]) * (r1 - p2[0])) / denominator
-    u = ((p2[0] - p1[0]) * (c1 - p1[1]) - (p1[0] - r1) * (c2 - p1[1])) / denominator
+def are_lines_intersected(line1_p1, line1_p2, line2_p1, line2_p2):
+    """
+    This function checks if two lines defined by their end points intersect.
 
-    # Check if the intersection point is within the line segment (revised for efficiency and edge case handling)
-    return 0 <= t <= 1 and 0 <= u <= 1
+    Args:
+        line1_p1: A tuple (x, y) representing the first point of line 1.
+        line1_p2: A tuple (x, y) representing the second point of line 1.
+        line2_p1: A tuple (x, y) representing the first point of line 2.
+        line2_p2: A tuple (x, y) representing the second point of line 2.
 
+    Returns:
+        True if the lines intersect, False otherwise.
+    """
 
-def random_string_generator():
-    return ''.join(random.choice(string.ascii_lowercase) for i in range(10))
+    # Calculate the direction vectors of the lines
+    line1_dir = (line1_p2[0] - line1_p1[0], line1_p2[1] - line1_p1[1])
+    line2_dir = (line2_p2[0] - line2_p1[0], line2_p2[1] - line2_p1[1])
+
+    # Check if the lines are parallel
+    if line1_dir[0] * line2_dir[1] == line1_dir[1] * line2_dir[0]:
+        return False  # Lines are parallel and don't intersect
+
+    # Calculate the determinant to check for intersection
+    denominator = line1_dir[0] * line2_dir[1] - line1_dir[1] * line2_dir[0]
+
+    # Lines are collinear if the denominator is close to zero
+    if abs(denominator) < 1e-6:
+        return False  # Lines are collinear and may or may not intersect
+
+    # Calculate the intersection point (if it exists)
+    t1 = ((line2_p2[0] - line2_p1[0]) * (line1_p1[1] - line2_p1[1]) -
+          (line2_p2[1] - line2_p1[1]) * (line1_p1[0] - line2_p1[0])) / denominator
+    t2 = ((line1_p2[0] - line1_p1[0]) * (line1_p1[1] - line2_p1[1]) -
+          (line1_p2[1] - line1_p1[1]) * (line1_p1[0] - line2_p1[0])) / denominator
+
+    # Check if the intersection point lies on the line segments
+    if 0 <= t1 <= 1 and 0 <= t2 <= 1:
+        return True  # Lines intersect
+
+    return False  # Lines don't intersect
 
 
 def main():
@@ -166,15 +176,16 @@ def main():
         #     cv2.imwrite(f'images/{random_string_generator()}.jpg', frame)
 
         for (x, y, w, h) in faces:
-            x_2 = x + w
-            y_2 = y + h
             cv2.rectangle(frame, (x, y), (x + w, y + h), (252, 207, 32), 1)
             key = cv2.waitKey(1) & 0xFF
-            if line_intersects_rectangle((x1, y1), (x2, y2), x, x_2, y, y_2):
+
+            print(is_line_and_rectangle_intersected(x, y, w, h, (x1, y1), (x2, y2)))
+
+            if is_line_and_rectangle_intersected(x, y, w, h, (x1, y1), (x2, y2)):
                 cv2.putText(frame, 'caught one', (x + 10, y + h - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
             else:
                 cv2.putText(frame, "can't find it", (x + 10, y + h - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            cv2.line(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.line(frame, (x1, y1), (x2, y2), (0, 255, 0), 1)
 
         # Display frame
         cv2.imshow('User Image', frame)
