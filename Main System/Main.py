@@ -114,7 +114,7 @@ def login():
     print("Login")
     # email = input("enter your email : ")
     # loc_password = input("enter your password : ")
-    email = "1994640082@heimdall.com"
+    email = "8012007513@heimdall.com"
     lock_password = "123123123"
     login_user = pyrebase_auth.sign_in_with_email_and_password(email, lock_password)
     print("Successfully logged in!")
@@ -261,9 +261,6 @@ def captureImages():
             cv2.imwrite(f'images/{image_name}.jpg', frame)
             print("face detected")
 
-        # Display frame
-        # cv2.imshow('User Image', frame)
-    # Release resources
     cv2.destroyAllWindows()
     return images
 
@@ -307,9 +304,8 @@ def main():
             if (ultra_sonic < 1) or pirRead or irRead:
                 if alert_counter > 400:
                     images = captureImages()
-                    if len(images) == 0:
+                    if len(images) != 0:
                         alert_counter = 0
-                        images = captureImages()
                         thread = threading.Thread(target=uploadImages, args=(images,))
                         thread.start()
                         print(urls)
@@ -325,7 +321,7 @@ def main():
                 cv2.rectangle(frame, (x, y), (x + w, y + h), (252, 207, 32), 1)
                 key = cv2.waitKey(1) & 0xFF
                 if y + h > 300:
-                    set_buzzer()
+                    print("caught one")
 
             # if the door is opened the lock is opened
             if not magnetRead:
