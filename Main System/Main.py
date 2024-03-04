@@ -8,6 +8,8 @@ import random
 import string
 import datetime
 import threading
+import firebase_admin
+from firebase_admin import credentials, firestore
 
 GPIO.cleanup()
 
@@ -30,11 +32,17 @@ firebase_config = {
 # initialize pyrebase
 pyrebase_firebase = pyrebase.initialize_app(firebase_config)
 # initialize pyrebase auth
-pyrebase_auth = pyrebase_firebase.auth()
+firebase_auth = pyrebase_firebase.auth()
 # initialize pyrebase database
-pyrebase_database = pyrebase_firebase.database()
+firebase_database = pyrebase_firebase.database()
 # initialize pyrebase storage
-pyrebase_storage = pyrebase_firebase.storage()
+firebase_storage = pyrebase_firebase.storage()
+# initialize Firebase admin with firestore
+firestore_credentials = credentials.Certificate("heimdall.json")
+app = firebase_admin.initialize_app(firestore_credentials)
+firebase_firestore = firestore.client()
+log_collection_reference = firebase_firestore.collection('Log')
+notifications_collection_reference = firebase_firestore.collection('Notifications')
 
 # define the variables
 # set the pins for the ultrasonic sensor (Trigger Pin Out & Echo Pin In)
@@ -73,6 +81,8 @@ x2: int = 0
 
 # configurations Variables
 alert_counter = 600
+trip_wire_alert_counter = 300
+trip_wire_alert_time = 300
 opened: bool = True
 login_error_message: str = ""
 image_uploading_error: str = ""
@@ -122,7 +132,7 @@ def login():
             print(email_and_password)
             email = email_and_password[0]
             lock_password = email_and_password[1]
-            login_user = pyrebase_auth.sign_in_with_email_and_password(email, lock_password)
+            login_user = firebase_auth.sign_in_with_email_and_password(email, lock_password)
             print("Successfully logged in!")
             lock_id = login_user['localId']
             token = login_user["idToken"]
@@ -132,23 +142,25 @@ def login():
 
 
 def setup_lock_configuration():
-    global password, y1, y2, x1, x2
-    my_stream = pyrebase_database.child(f"Locks/{lock_id}").stream(stream_handler)
-    lock_document = pyrebase_database.child(f"Locks/{lock_id}/password").get(token)
+    global password, y1, y2, x1, x2, trip_wire_alert_time
+    my_stream = firebase_database.child(f"Locks/{lock_id}").stream(stream_handler)
+    lock_document = firebase_database.child(f"Locks/{lock_id}/password").get(token)
     password = lock_document.val()
-    y1_coordinate = pyrebase_database.child(f"Locks/{lock_id}/y1_value").get(token)
-    y1 = y1_coordinate.val()
-    y2_coordinate = pyrebase_database.child(f"Locks/{lock_id}/y2_value").get(token)
-    y2 = y2_coordinate.val()
-    x1_coordinate = pyrebase_database.child(f"Locks/{lock_id}/x1_value").get(token)
-    x1 = x1_coordinate.val()
-    x2_coordinate = pyrebase_database.child(f"Locks/{lock_id}/x2_value").get(token)
-    x2 = x2_coordinate.val()
+    y1_coordinate = firebase_database.child(f"Locks/{lock_id}/y1_value").get(token)
+    y1 = int(y1_coordinate.val())
+    y2_coordinate = firebase_database.child(f"Locks/{lock_id}/y2_value").get(token)
+    y2 = int(y2_coordinate.val())
+    x1_coordinate = firebase_database.child(f"Locks/{lock_id}/x1_value").get(token)
+    x1 = int(x1_coordinate.val())
+    x2_coordinate = firebase_database.child(f"Locks/{lock_id}/x2_value").get(token)
+    x2 = int(x2_coordinate.val())
+    duration = firebase_database.child(f"Locks/{lock_id}/alert_duration").get(token)
+    trip_wire_alert_time = int(duration.val())
 
 
 # stream handler function (listener)
 def stream_handler(message):
-    global password, y1, y2, x1, x2
+    global password, y1, y2, x1, x2, trip_wire_alert_time
     if message["path"] == "/opened":
         if message["data"]:
             open_door()
@@ -164,6 +176,8 @@ def stream_handler(message):
         x1 = message["data"]
     if message["path"] == "/x2_value":
         x2 = message["data"]
+    if message["path"] == "/x2_value":
+        trip_wire_alert_time = message["alert_duration"]
     print("-------------------")
     print(message["event"])  # put
     print(message["path"])  # /uid
@@ -232,12 +246,42 @@ def open_door():
     if not opened:
         GPIO.output(lock, 1)
         try:
-            pyrebase_database.child(f"Locks/{lock_id}/opened").set(True)
+            firebase_database.child(f"Locks/{lock_id}/opened").set(True)
         except Exception as e:
             updating_state_error = str(e)
-
         sleep(2)
         opened = not opened
+
+
+def set_door_opened_log():
+    try:
+        log_collection_reference.add(
+            {
+                'id': lock_id,
+                'method': 'keypad',
+                'timeOpened': datetime.datetime.now(),
+                "userId": None,
+                "userName": "admin",
+                "eventType": "Unlocked"
+            }
+        )
+    except Exception as e:
+        print(e)
+
+
+def send_notification_to_firestore(urls, priority, message):
+    try:
+        notifications_collection_reference.add(
+            {
+                'id': lock_id,
+                'priority': priority,
+                'time': datetime.datetime.now(),
+                "images_url": urls,
+                "body": message
+            }
+        )
+    except Exception as e:
+        print(e)
 
 
 # function to close the door
@@ -246,7 +290,7 @@ def close_door():
     if opened:
         GPIO.output(lock, 0)
         try:
-            pyrebase_database.child(f"Locks/{lock_id}/opened").set(False)
+            firebase_database.child(f"Locks/{lock_id}/opened").set(False)
         except Exception as e:
             updating_state_error = str(e)
         opened = not opened
@@ -274,6 +318,8 @@ def password_validation(user_password: str):
     global password
     if len(user_password) == len(password):
         if user_password == password:
+            thread = threading.Thread(target=set_door_opened_log)
+            thread.start()
             open_door()
             user_password = ""
         else:
@@ -285,6 +331,51 @@ def password_validation(user_password: str):
         user_password = ""
 
     return user_password
+
+
+def motion_detection(ultra_sonic, pir_read, ir_read):
+    global alert_counter
+    if (ultra_sonic < 1) or pir_read or ir_read:
+        if alert_counter > 400:
+            images = captureImages()
+            if len(images) != 0:
+                alert_counter = 0
+                thread = threading.Thread(target=uploadImages, args=(images,))
+                thread.start()
+            else:
+                alert_counter = 200
+                thread = threading.Thread(target=send_notification_to_firestore, args=([], "average", "Please be "
+                                                                                                      "careful, "
+                                                                                                      "something "
+                                                                                                      "strange seems "
+                                                                                                      "to be "
+                                                                                                      "happening, "
+                                                                                                      "but the face "
+                                                                                                      "cannot be "
+                                                                                                      "identified"))
+                thread.start()
+
+
+def trip_wire_detection():
+    global trip_wire_alert_counter
+    # tripe wire functions
+    frame = piCam.capture_array()
+    # Convert to grayscale for efficiency
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    # Detect faces
+    faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+
+    for (x, y, w, h) in faces:
+        cv2.rectangle(frame, (x, y), (x + w, y + h), (252, 207, 32), 1)
+        key = cv2.waitKey(1) & 0xFF
+        if is_line_and_rectangle_intersected(x, y, w, h, (x1, y1), (x2, y2)):
+            if trip_wire_alert_counter > trip_wire_alert_time:
+                images = captureImages()
+                if len(images) != 0:
+                    trip_wire_alert_counter = 0
+                    thread = threading.Thread(target=uploadImages, args=(images,))
+                    thread.start()
+            set_buzzer()
 
 
 def captureImages():
@@ -309,125 +400,99 @@ def captureImages():
     return images
 
 
-def line_intersects_rectangle(p1, p2, r1, r2, c1, c2):
-    """
-    Checks if the line segment defined by points p1 and p2 intersects with the rectangle defined by coordinates (r1,
-    c1), (r2, c1), (r2, c2), and (r1, c2).
-
-    Args:
-        p1: Tuple (x, y) of the starting point of the line segment.
-        p2: Tuple (x, y) of the ending point of the line segment.
-        r1: Float, x-coordinate of the leftmost point of the rectangle.
-        r2: Float, x-coordinate of the rightmost point of the rectangle.
-        c1: Float, y-coordinate of the topmost point of the rectangle.
-        c2: Float, y-coordinate of the bottommost point of the rectangle.
-
-    Returns:
-        True if the line segment intersects the rectangle, False otherwise.
-    """
-
-    # Check if the line segment is completely outside the rectangle
-    if (p1[0] < r1 and p2[0] < r1) or (p1[0] > r2 and p2[0] > r2) or (p1[1] < c2 and p2[1] < c2) or (
-            p1[1] > c1 and p2[1] > c1):
-        return False
-
-    # Check for intersection with each side of the rectangle
-    for x in [r1, r2]:
-        if line_intersects_line(p1, p2, (x, c1), (x, c2)):
-            return True
-
-    for y in [c1, c2]:
-        if line_intersects_line(p1, p2, (r1, y), (r2, y)):
-            return True
-
-    return False
-
-
-def line_intersects_line(p1, p2, q1, q2):
-    """
-    Checks if two line segments defined by points p1, p2 and q1, q2 intersect.
-
-    Args:
-        p1: Tuple (x, y) of the starting point of the first line segment.
-        p2: Tuple (x, y) of the ending point of the first line segment.
-        q1: Tuple (x, y) of the starting point of the second line segment.
-        q2: Tuple (x, y) of the ending point of the second line segment.
-
-    Returns:
-        True if the line segments intersect, False otherwise.
-    """
-
-    # Calculate the denominator to avoid division by zero
-    denominator = (p2[0] - p1[0]) * (q2[1] - q1[1]) - (p2[1] - p1[1]) * (q2[0] - q1[0])
-
-    # Check if lines are parallel
-    if denominator == 0:
-        return False
-
-    # Calculate the intersection point parameters
-    t = ((q2[0] - q1[0]) * (p1[1] - q1[1]) + (q2[1] - q1[1]) * (q1[0] - p1[0])) / denominator
-    u = ((p2[0] - p1[0]) * (p1[1] - q1[1]) + (p2[1] - p1[1]) * (q1[0] - p1[0])) / denominator
-
-    # Check if the intersection point is within the line segments
-    return 0 <= t <= 1 and 0 <= u <= 1
-
-
 def uploadImages(images):
     urls = []
     for i in range(len(images)):
-        pyrebase_storage.child(f"captures/{images[i]}.jpg").put(f'images/{images[i]}.jpg')
-        url = pyrebase_storage.child(f"captures/{images[i]}.jpg").get_url(token)
+        firebase_storage.child(f"captures/{images[i]}.jpg").put(f'images/{images[i]}.jpg')
+        url = firebase_storage.child(f"captures/{images[i]}.jpg").get_url(token)
         urls.append(url)
+    send_notification_to_firestore(urls, "high",
+                                   "Please be careful, there seems to be something strange going on there, "
+                                   "someone outside the door")
     print(urls)
     return urls
+
+
+def is_line_and_rectangle_intersected(x, y, w, h, line1_p1, line1_p2):
+    if are_lines_intersected(line1_p1, line1_p2, (x, y), (x + w, y)):
+        return True
+    elif are_lines_intersected(line1_p1, line1_p2, (x, y), (x, y + h)):
+        return True
+    elif are_lines_intersected(line1_p1, line1_p2, (x, y + h), (x + w, y + h)):
+        return True
+    elif are_lines_intersected(line1_p1, line1_p2, (x + w, y + h), (x + w, y)):
+        return True
+    else:
+        return False
+
+
+def are_lines_intersected(line1_p1, line1_p2, line2_p1, line2_p2):
+    """
+    This function checks if two lines defined by their end points intersect.
+
+    Args:
+        line1_p1: A tuple (x, y) representing the first point of line 1.
+        line1_p2: A tuple (x, y) representing the second point of line 1.
+        line2_p1: A tuple (x, y) representing the first point of line 2.
+        line2_p2: A tuple (x, y) representing the second point of line 2.
+
+    Returns:
+        True if the lines intersect, False otherwise.
+    """
+
+    # Calculate the direction vectors of the lines
+    line1_dir = (line1_p2[0] - line1_p1[0], line1_p2[1] - line1_p1[1])
+    line2_dir = (line2_p2[0] - line2_p1[0], line2_p2[1] - line2_p1[1])
+
+    # Check if the lines are parallel
+    if line1_dir[0] * line2_dir[1] == line1_dir[1] * line2_dir[0]:
+        return False  # Lines are parallel and don't intersect
+
+    # Calculate the determinant to check for intersection
+    denominator = line1_dir[0] * line2_dir[1] - line1_dir[1] * line2_dir[0]
+
+    # Lines are collinear if the denominator is close to zero
+    if abs(denominator) < 1e-6:
+        return False  # Lines are collinear and may or may not intersect
+
+    # Calculate the intersection point (if it exists)
+    t1 = ((line2_p2[0] - line2_p1[0]) * (line1_p1[1] - line2_p1[1]) -
+          (line2_p2[1] - line2_p1[1]) * (line1_p1[0] - line2_p1[0])) / denominator
+    t2 = ((line1_p2[0] - line1_p1[0]) * (line1_p1[1] - line2_p1[1]) -
+          (line1_p2[1] - line1_p1[1]) * (line1_p1[0] - line2_p1[0])) / denominator
+
+    # Check if the intersection point lies on the line segments
+    if 0 <= t1 <= 1 and 0 <= t2 <= 1:
+        return True  # Lines intersect
+
+    return False  # Lines don't intersect
 
 
 # define the main function (The Entry Point of the program)
 # in this function it will call all sensor's function and handle the logic calling
 def main():
-    global alert_counter
+    global alert_counter, trip_wire_alert_counter
     # define the password
     user_password = ""
     last_Key = ""
-    urls = []
     try:
         while True:
             # get the reads from the sensors and the keypad
             user_password, last_Key = read_keypad(last_Key, user_password)
             user_password = password_validation(user_password)
-            print(user_password)
             ultra_sonic = ultra_sonic_sensor()
             irRead = not ir_sensor()
             pirRead = pir_sensor()
             magnetRead = magnet_sensor()
+            print(user_password)
             print(f"Ultrasonic - {ultra_sonic}")
             print(f"PIR - {pirRead}")
             print(f"IR - {irRead}")
-            print(f"Counter - {alert_counter}")
+            print(f"Alert Counter - {alert_counter}")
+            print(f"Trip Wire Counter - {trip_wire_alert_counter}")
 
-            # change the light state depend on the sensors read
-            if (ultra_sonic < 1) or pirRead or irRead:
-                if alert_counter > 400:
-                    images = captureImages()
-                    if len(images) != 0:
-                        alert_counter = 0
-                        thread = threading.Thread(target=uploadImages, args=(images,))
-                        thread.start()
-                        print(urls)
-
-            # qr_code_scanning()
-            frame = piCam.capture_array()
-            # Convert to grayscale for efficiency
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            # Detect faces
-            faces = face_cascade.detectMultiScale(gray, 1.1, 4)
-
-            for (x, y, w, h) in faces:
-                cv2.rectangle(frame, (x, y), (x + w, y + h), (252, 207, 32), 1)
-                key = cv2.waitKey(1) & 0xFF
-                if line_intersects_rectangle((x1, y1), (x2, y2), x, (x + w), y, (y + h)):
-                    print("caught one")
-
+            motion_detection(ultra_sonic, pirRead, irRead)
+            trip_wire_detection()
             # if the door is opened the lock is opened
             if not magnetRead:
                 close_door()
@@ -435,6 +500,7 @@ def main():
                 open_door()
 
             alert_counter += 1
+            trip_wire_alert_counter += 1
             sleep(0.1)
     except KeyboardInterrupt():
         GPIO.cleanup()
