@@ -269,7 +269,7 @@ def set_door_opened_log():
         print(e)
 
 
-def send_notification_to_firestore(urls, priority, message):
+def send_notification_to_firestore(urls, priority, message, code):
     try:
         notifications_collection_reference.add(
             {
@@ -277,7 +277,8 @@ def send_notification_to_firestore(urls, priority, message):
                 'priority': priority,
                 'time': datetime.datetime.now(),
                 "images_url": urls,
-                "body": message
+                "body": message,
+                "code": code
             }
         )
     except Exception as e:
@@ -291,6 +292,10 @@ def close_door():
         GPIO.output(lock, 0)
         try:
             firebase_database.child(f"Locks/{lock_id}/opened").set(False)
+            # send motion detected notification
+            thread = threading.Thread(target=send_notification_to_firestore,
+                                      args=([], "low", "Lock Closed Successfully ", 105))
+            thread.start()
         except Exception as e:
             updating_state_error = str(e)
         opened = not opened
@@ -320,6 +325,10 @@ def password_validation(user_password: str):
         if user_password == password:
             thread = threading.Thread(target=set_door_opened_log)
             thread.start()
+            # send motion detected notification
+            thread = threading.Thread(target=send_notification_to_firestore,
+                                      args=([], "low", "Lock Opened Successfully ", 104))
+            thread.start()
             open_door()
             user_password = ""
         else:
@@ -340,10 +349,11 @@ def motion_detection(ultra_sonic, pir_read, ir_read):
             images = captureImages()
             if len(images) != 0:
                 alert_counter = 0
-                thread = threading.Thread(target=uploadImages, args=(images,))
+                thread = threading.Thread(target=uploadImages, args=(images, 301))
                 thread.start()
             else:
                 alert_counter = 200
+                # send motion detected notification
                 thread = threading.Thread(target=send_notification_to_firestore, args=([], "average", "Please be "
                                                                                                       "careful, "
                                                                                                       "something "
@@ -352,7 +362,8 @@ def motion_detection(ultra_sonic, pir_read, ir_read):
                                                                                                       "happening, "
                                                                                                       "but the face "
                                                                                                       "cannot be "
-                                                                                                      "identified"))
+                                                                                                      "identified",
+                                                                                       201))
                 thread.start()
 
 
@@ -373,7 +384,7 @@ def trip_wire_detection():
                 images = captureImages()
                 if len(images) != 0:
                     trip_wire_alert_counter = 0
-                    thread = threading.Thread(target=uploadImages, args=(images,))
+                    thread = threading.Thread(target=uploadImages, args=(images, 302))
                     thread.start()
             set_buzzer()
 
@@ -400,7 +411,7 @@ def captureImages():
     return images
 
 
-def uploadImages(images):
+def uploadImages(images, code):
     urls = []
     for i in range(len(images)):
         firebase_storage.child(f"captures/{images[i]}.jpg").put(f'images/{images[i]}.jpg')
@@ -408,7 +419,7 @@ def uploadImages(images):
         urls.append(url)
     send_notification_to_firestore(urls, "high",
                                    "Please be careful, there seems to be something strange going on there, "
-                                   "someone outside the door")
+                                   "someone outside the door", code)
     print(urls)
     return urls
 
