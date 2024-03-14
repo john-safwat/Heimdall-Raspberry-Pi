@@ -8,8 +8,9 @@ import random
 import string
 import datetime
 import threading
+import pytz
 import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import credentials, firestore, messaging
 
 GPIO.cleanup()
 
@@ -166,6 +167,7 @@ def stream_handler(message):
             open_door()
         else:
             close_door()
+            print('database lock')
     if message["path"] == "/password":
         password = message["data"]
     if message["path"] == "/y1_value":
@@ -246,20 +248,42 @@ def open_door():
     if not opened:
         GPIO.output(lock, 1)
         try:
+            sleep(2)
+            opened = not opened
             firebase_database.child(f"Locks/{lock_id}/opened").set(True)
         except Exception as e:
             updating_state_error = str(e)
-        sleep(2)
+
+
+# function to close the door
+def close_door():
+    global opened, updating_state_error
+    if opened:
+        GPIO.output(lock, 0)
         opened = not opened
+        try:
+            firebase_database.child(f"Locks/{lock_id}/opened").set(False)
+            # send motion detected notification
+            thread = threading.Thread(target=send_notification_to_firestore,
+                                      args=([], "low", "Lock Closed Successfully ", 105))
+            thread.start()
+        except Exception as e:
+            updating_state_error = str(e)
 
 
 def set_door_opened_log():
+    # Get the current time
+    current_time = datetime.datetime.now()
+    # Define the time difference (2 hours)
+    time_diff = datetime.timedelta(hours=2)
+    # Subtract the time difference from current time to get 2 hours ago
+    nowTime = current_time - time_diff
     try:
         log_collection_reference.add(
             {
                 'id': lock_id,
                 'method': 'keypad',
-                'timeOpened': datetime.datetime.now(),
+                'timeOpened': nowTime,
                 "userId": None,
                 "userName": "admin",
                 "eventType": "Unlocked"
@@ -270,35 +294,49 @@ def set_door_opened_log():
 
 
 def send_notification_to_firestore(urls, priority, message, code):
+    # Get the current time
+    current_time = datetime.datetime.now()
+    # Define the time difference (2 hours)
+    time_diff = datetime.timedelta(hours=2)
+    # Subtract the time difference from current time to get 2 hours ago
+    nowTime = current_time - time_diff
+    notification_data = {
+        'id': lock_id,
+        'priority': priority,
+        'time': nowTime,
+        "images_url": urls,
+        "body": message,
+        "code": code
+    }
     try:
-        notifications_collection_reference.add(
-            {
-                'id': lock_id,
+        notifications_collection_reference.add(notification_data)
+        notification_message = messaging.Message(
+            notification=messaging.Notification(
+                title="Heimdall",
+                body=message_handler(code)
+            ),
+            topic=lock_id,
+            data={
+                "id": lock_id,
                 'priority': priority,
-                'time': datetime.datetime.now(),
-                "images_url": urls,
+                'time': str(nowTime),
                 "body": message,
-                "code": code
+                "code": str(code)
             }
         )
+        response = messaging.send(notification_message)
+        print(response)
     except Exception as e:
         print(e)
 
 
-# function to close the door
-def close_door():
-    global opened, updating_state_error
-    if opened:
-        GPIO.output(lock, 0)
-        try:
-            firebase_database.child(f"Locks/{lock_id}/opened").set(False)
-            # send motion detected notification
-            thread = threading.Thread(target=send_notification_to_firestore,
-                                      args=([], "low", "Lock Closed Successfully ", 105))
-            thread.start()
-        except Exception as e:
-            updating_state_error = str(e)
-        opened = not opened
+def message_handler(code):
+    if 100 <= code < 200:
+        return "Your Lock is Opened or Closed Successfully"
+    elif 200 <= code < 300:
+        return "There is Something Unclear"
+    else:
+        return "Caught One"
 
 
 # function to read each row and each column

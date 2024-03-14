@@ -1,21 +1,20 @@
 import firebase_admin
-from firebase_admin import credentials, firestore, messaging
+from firebase_admin import credentials, messaging
 
-firestore_credentials = credentials.Certificate("heimdall.json")
-app = firebase_admin.initialize_app(firestore_credentials)
-firebase_firestore = firestore.client()
-log_collection_reference = firebase_firestore.collection('Log')
-log_collection_reference.add({u'name': u'test', u'added': u'just now'})
+firebase_cred = credentials.Certificate("heimdall.json")
+firebase_app = firebase_admin.initialize_app(firebase_cred)
 
-topic = "n197o0uVQ1WLANpSG5yH1VnxSKn1"
-try:
-    message = messaging.Message(
-        notification=messaging.Notification(
-            title="Heimdall Lock",
-            body="Check the code"
-        ),
-        topic=topic
-    )
-    messaging.send(message)
-except Exception as e:
-    print("exception")
+message = messaging.Message(
+    notification=messaging.Notification(
+        title="New Notification",
+        body="Alert to view"
+    ),
+    topic="TestData",
+    data={
+        "MyNotification": "nardin"
+    }
+)
+
+response = messaging.send(message)
+print(response)
+print("done")
