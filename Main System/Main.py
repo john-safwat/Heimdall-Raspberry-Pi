@@ -246,7 +246,7 @@ def set_buzzer():
 def open_door():
     global opened, updating_state_error
     if not opened:
-        GPIO.output(lock, 1)
+        GPIO.output(lock, 0)
         try:
             sleep(2)
             opened = not opened
@@ -259,7 +259,7 @@ def open_door():
 def close_door():
     global opened, updating_state_error
     if opened:
-        GPIO.output(lock, 0)
+        GPIO.output(lock, 1)
         opened = not opened
         try:
             firebase_database.child(f"Locks/{lock_id}/opened").set(False)
