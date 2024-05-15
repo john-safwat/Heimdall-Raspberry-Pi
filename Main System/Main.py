@@ -178,8 +178,11 @@ def stream_handler(message):
         x1 = message["data"]
     if message["path"] == "/x2_value":
         x2 = message["data"]
-    if message["path"] == "/x2_value":
-        trip_wire_alert_time = message["alert_duration"]
+    if message["path"] == "/alert_duration":
+        trip_wire_alert_time = message["data"]
+    if message["path"] == "/request_update":
+        if message["data"]:
+            update_tripwire_image()
     print("-------------------")
     print(message["event"])  # put
     print(message["path"])  # /uid
@@ -248,7 +251,7 @@ def open_door():
     if not opened:
         GPIO.output(lock, 0)
         try:
-            sleep(2)
+            sleep(1)
             opened = not opened
             firebase_database.child(f"Locks/{lock_id}/opened").set(True)
         except Exception as e:
@@ -343,9 +346,9 @@ def message_handler(code):
 def read_keypad(last_key, user_password):
     key = ""
     # loop on the 4 rows and columns to get the input
-    for i in range(0, 3):
+    for i in range(0, 4):
         GPIO.output(rows[i], GPIO.LOW)
-        for j in range(0, 3):
+        for j in range(0, 4):
             if GPIO.input(cols[j]) == GPIO.LOW:
                 key = characters[i][j]
         GPIO.output(rows[i], GPIO.HIGH)
@@ -425,6 +428,16 @@ def trip_wire_detection():
                     thread = threading.Thread(target=uploadImages, args=(images, 302))
                     thread.start()
             set_buzzer()
+
+
+def update_tripwire_image():
+    frame = piCam.capture_array()
+    image_name = random_string_generator()
+    cv2.imwrite(f'images/{image_name}.jpg', frame)
+    firebase_storage.child(f"captures/{image_name}.jpg").put(f'images/{image_name}.jpg')
+    url = firebase_storage.child(f"captures/{image_name}.jpg").get_url(token)
+    firebase_database.child(f"Locks/{lock_id}/lastImage").set(url)
+    firebase_database.child(f"Locks/{lock_id}/request_update").set(False)
 
 
 def captureImages():
@@ -530,20 +543,21 @@ def main():
             user_password, last_Key = read_keypad(last_Key, user_password)
             user_password = password_validation(user_password)
             ultra_sonic = ultra_sonic_sensor()
-            irRead = not ir_sensor()
-            pirRead = pir_sensor()
-            magnetRead = magnet_sensor()
+            ir_read = not ir_sensor()
+            pir_read = pir_sensor()
+            magnet_read = magnet_sensor()
             print(user_password)
             print(f"Ultrasonic - {ultra_sonic}")
-            print(f"PIR - {pirRead}")
-            print(f"IR - {irRead}")
+            print(f"PIR - {pir_read}")
+            print(f"IR - {ir_read}")
             print(f"Alert Counter - {alert_counter}")
             print(f"Trip Wire Counter - {trip_wire_alert_counter}")
+            print(f"Trip Wire Counter - {trip_wire_alert_time}")
 
-            motion_detection(ultra_sonic, pirRead, irRead)
+            motion_detection(ultra_sonic, pir_read, ir_read)
             trip_wire_detection()
             # if the door is opened the lock is opened
-            if not magnetRead:
+            if not magnet_read:
                 close_door()
             else:
                 open_door()
